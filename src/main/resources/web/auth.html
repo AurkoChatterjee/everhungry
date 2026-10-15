@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Log in - EverHungry</title>
+  <link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div class="orbs"></div>
+<header id="nav"></header>
+<main class="wrap">
+  <div class="auth">
+    <div class="glass pad">
+      <div class="seg" id="mode"><button data-m="login" class="on">Log in</button><button data-m="register">Create account</button></div>
+
+      <form id="login" class="stack" style="margin-top:20px">
+        <div class="field"><label for="le">Email</label><input id="le" type="email" required autocomplete="username"></div>
+        <div class="field"><label for="lp">Password</label><input id="lp" type="password" required autocomplete="current-password"></div>
+        <button class="btn primary" type="submit">Log in</button>
+      </form>
+
+      <form id="register" class="stack hidden" style="margin-top:20px">
+        <div class="field"><label>I want to</label>
+          <div class="seg" id="role"><button type="button" data-r="customer" class="on">Order food</button><button type="button" data-r="owner">Sell food</button><button type="button" data-r="driver">Deliver</button></div>
+        </div>
+        <div class="two">
+          <div class="field"><label for="rn">Your name</label><input id="rn" required></div>
+          <div class="field"><label for="rph">Phone</label><input id="rph" type="tel"></div>
+        </div>
+        <div id="ownerFields" class="two hidden">
+          <div class="field"><label for="rr">Restaurant name</label><input id="rr"></div>
+          <div class="field"><label for="rc">Cuisine</label><input id="rc" placeholder="e.g. South Indian"></div>
+        </div>
+        <div class="field"><label for="re">Email</label><input id="re" type="email" required autocomplete="username"></div>
+        <div class="field"><label for="rp">Password (6 characters or more)</label><input id="rp" type="password" minlength="6" required autocomplete="new-password"></div>
+        <button class="btn primary" type="submit">Create account</button>
+      </form>
+      <div class="error" id="err" role="alert"></div>
+    </div>
+
+    <div class="glass demo">
+      <div class="muted">Demo accounts (password <span class="mono">demo123</span>). Click one to fill the form.</div>
+      <div id="demos">
+        <button data-e="customer@everhungry.demo">customer</button>
+        <button data-e="owner1@everhungry.demo">owner 1</button>
+        <button data-e="owner2@everhungry.demo">owner 2</button>
+        <button data-e="owner3@everhungry.demo">owner 3</button>
+        <button data-e="driver1@everhungry.demo">driver 1</button>
+        <button data-e="driver2@everhungry.demo">driver 2</button>
+        <button data-e="admin@everhungry.demo">admin</button>
+      </div>
+    </div>
+  </div>
+</main>
+<script src="/js/app.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+let role = 'customer';
+function setMode(m) {
+  $$('#mode button').forEach(b => b.classList.toggle('on', b.dataset.m === m));
+  $('#login').classList.toggle('hidden', m !== 'login');
+  $('#register').classList.toggle('hidden', m !== 'register');
+  $('#err').textContent = '';
+}
+$$('#mode button').forEach(b => b.onclick = () => setMode(b.dataset.m));
+$$('#role button').forEach(b => b.onclick = () => {
+  role = b.dataset.r;
+  $$('#role button').forEach(x => x.classList.toggle('on', x === b));
+  $('#ownerFields').classList.toggle('hidden', role !== 'owner');
+});
+$$('#demos button').forEach(b => b.onclick = () => {
+  setMode('login'); $('#le').value = b.dataset.e; $('#lp').value = 'demo123';
+});
+function done(user) { location.href = params.get('next') || HOME[user.role]; }
+$('#login').onsubmit = async e => {
+  e.preventDefault();
+  try { done((await api('/auth/login', 'POST', { email: $('#le').value, password: $('#lp').value })).user); }
+  catch (err) { $('#err').textContent = err.message; }
+};
+$('#register').onsubmit = async e => {
+  e.preventDefault();
+  try {
+    done((await api('/auth/register', 'POST', {
+      role, name: $('#rn').value, phone: $('#rph').value, email: $('#re').value, password: $('#rp').value,
+      restaurantName: $('#rr').value, cuisine: $('#rc').value
+    })).user);
+  } catch (err) { $('#err').textContent = err.message; }
+};
+(async () => { await boot(); if (params.get('mode') === 'register') setMode('register'); })();
+</script>
+</body>
+</html>

@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Restaurant - EverHungry</title>
+  <link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+</head>
+<body>
+<div class="orbs"></div>
+<header id="nav"></header>
+<main class="wrap">
+  <div id="head" style="margin-top:34px"></div>
+  <div class="layout">
+    <section class="glass pad" id="menu" aria-label="Menu"></section>
+    <aside class="glass pad sticky" id="cartBox" aria-label="Your order"></aside>
+  </div>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/js/app.js"></script>
+<script>
+const rid = new URLSearchParams(location.search).get('id');
+let me, rest, cart = {}, map, marker, fee = 30;
+const saved = () => { try { return JSON.parse(localStorage.getItem('eh_cart') || '{}'); } catch (e) { return {}; } };
+
+function totals() {
+  let sub = 0, count = 0;
+  for (const m of rest.menu) { const q = cart[m.id] || 0; sub += q * m.price; count += q; }
+  return { sub, count };
+}
+function renderMenu() {
+  $('#menu').innerHTML = '<h2 style="margin-bottom:6px">Menu</h2>' + (rest.menu.length ? rest.menu.map(m => `
+    <div class="dish"><div><h3>${esc(m.name)}</h3><p>${esc(m.description || '')}</p><div class="mono" style="margin-top:6px">${money(m.price)}</div></div>
+    <div class="qty"><button data-d="-1" data-id="${m.id}" aria-label="Remove one ${esc(m.name)}">&minus;</button><span>${cart[m.id] || 0}</span><button data-d="1" data-id="${m.id}" aria-label="Add one ${esc(m.name)}">+</button></div></div>`).join('')
+    : '<div class="empty">This kitchen has not added dishes yet.</div>');
+  $$('#menu .qty button').forEach(b => b.onclick = () => {
+    const id = b.dataset.id, q = Math.max(0, Math.min(20, (cart[id] || 0) + Number(b.dataset.d)));
+    cart[id] = q; if (!q) delete cart[id];
+    localStorage.setItem('eh_cart', JSON.stringify({ restaurantId: rest.id, items: cart }));
+    renderMenu(); renderCart(false);
+  });
+}
+function renderCart(rebuild = true) {
+  const { sub, count } = totals();
+  if (rebuild || !$('#lines')) {
+    const canOrder = me && me.role === 'customer';
+    $('#cartBox').innerHTML = `<h2>Your order</h2><div id="lines" style="margin-top:12px"></div>
+      <div class="${canOrder ? '' : 'hidden'}" id="checkout">
+        <div class="field"><label for="addr">Delivery address</label><textarea id="addr" placeholder="Flat, building, street, landmark"></textarea></div>
+        <div class="field"><label>Drop-off point</label><div class="map" id="pick"></div>
+          <div class="row" style="margin-top:8px"><button class="btn sm" id="gps" type="button">Use my location</button><span class="muted" style="font-size:.85rem">Drag the pin or tap the map</span></div></div>
+        <div class="field"><label for="note">Note for the kitchen (optional)</label><input id="note" maxlength="200"></div>
+      </div>
+      <div id="cta" style="margin-top:16px"></div><div class="error" id="err" role="alert"></div>`;
+    if (canOrder) initPicker();
+  }
+  $('#lines').innerHTML = count ? rest.menu.filter(m => cart[m.id]).map(m =>
+    `<div class="line"><span>${cart[m.id]} &times; ${esc(m.name)}</span><span class="mono">${money(cart[m.id] * m.price)}</span></div>`).join('') +
+    `<div class="line muted"><span>Delivery fee</span><span class="mono">${money(fee)}</span></div>
+     <div class="line total"><span>Total</span><span class="mono">${money(sub + fee)}</span></div>`
+    : '<div class="muted">Add a dish from the menu to start.</div>';
+  const cta = $('#cta');
+  if (!me) cta.innerHTML = `<a class="btn primary" href="/auth.html?next=${encodeURIComponent(location.pathname + location.search)}">Log in to order</a>`;
+  else if (me.role !== 'customer') cta.innerHTML = '<div class="muted">Sign in with a customer account to place orders.</div>';
+  else cta.innerHTML = `<button class="btn primary" id="place" ${count && rest.is_open ? '' : 'disabled'}>${rest.is_open ? 'Place order' : 'Kitchen is closed'}</button>`;
+  const place = $('#place');
+  if (place) place.onclick = placeOrder;
+}
+function initPicker() {
+  const start = [rest.lat + 0.012, rest.lng + 0.01];
+  map = makeMap('pick', [rest.lat, rest.lng], 13);
+  L.marker([rest.lat, rest.lng], { icon: pinIcon('shop') }).addTo(map).bindTooltip(rest.name);
+  marker = L.marker(start, { icon: pinIcon('home'), draggable: true }).addTo(map);
+  map.on('click', e => marker.setLatLng(e.latlng));
+  $('#gps').onclick = () => navigator.geolocation
+    ? navigator.geolocation.getCurrentPosition(p => { const ll = [p.coords.latitude, p.coords.longitude]; marker.setLatLng(ll); map.setView(ll, 15); },
+        () => toast('Location is blocked. Drag the pin instead.', 'bad'))
+    : toast('This browser cannot share location. Drag the pin instead.', 'bad');
+}
+async function placeOrder() {
+  const ll = marker.getLatLng();
+  $('#place').disabled = true;
+  try {
+    const items = Object.entries(cart).map(([itemId, qty]) => ({ itemId: Number(itemId), qty }));
+    const o = await api('/orders', 'POST', { restaurantId: rest.id, items, address: $('#addr').value, lat: ll.lat, lng: ll.lng, note: $('#note').value });
+    localStorage.removeItem('eh_cart');
+    location.href = '/orders.html?id=' + o.id;
+  } catch (e) { $('#err').textContent = e.message; $('#place').disabled = false; }
+}
+(async () => {
+  me = await boot();
+  try {
+    rest = await api('/restaurants/' + rid);
+    fee = rest.delivery_fee;
+    document.title = rest.name + ' - EverHungry';
+    const s = saved(); if (s.restaurantId === rest.id) cart = s.items || {};
+    $('#head').innerHTML = `<div class="row between"><div><h1 style="font-size:2.6rem">${esc(rest.name)}</h1>
+      <p class="muted" style="margin-top:6px">${esc(rest.cuisine || '')} &middot; ${esc(rest.address || '')}</p><p style="margin-top:8px;max-width:60ch">${esc(rest.description || '')}</p></div>
+      <div><span class="pill ${rest.is_open ? 'open' : 'closed'}">${rest.is_open ? 'Open' : 'Closed'}</span><div class="mono muted" style="margin-top:8px">${rest.prep_minutes} min prep</div></div></div>`;
+    renderMenu(); renderCart();
+  } catch (e) { $('#menu').innerHTML = `<div class="empty">${esc(e.message)}. <a href="/">Back to restaurants</a></div>`; }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Creator - EverHungry</title>
+  <link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div class="orbs"></div>
+<header id="nav"></header>
+<main class="wrap">
+  <div class="creator stack">
+    <section class="glass pad">
+      <div class="row" style="gap:22px;flex-wrap:nowrap">
+        <div class="avatar" aria-hidden="true">AC</div>
+        <div>
+          <h1 style="font-size:2.3rem">A. Chatterjee</h1>
+          <p class="muted" style="margin-top:6px">Fourth-year Computer Science and Engineering student at VIT Bhopal University, specializing in Health Informatics. Graduating May 2027.</p>
+          <div class="row" style="margin-top:14px"><a class="btn primary" href="https://github.com/AurkoChatterjee" target="_blank" rel="noopener">GitHub: AurkoChatterjee</a></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="glass pad">
+      <h2 style="margin-bottom:12px">About this project</h2>
+      <p>EverHungry is a multi-vendor food delivery platform. Customers order from independent restaurants, restaurant owners run their own kitchen dashboards, and drivers claim and deliver orders. Every order moves through a fixed set of statuses, and each change reaches the people involved immediately. While a delivery is under way, the customer sees the driver's position on a map.</p>
+    </section>
+
+    <section class="glass pad">
+      <h2 style="margin-bottom:14px">How it is built</h2>
+      <dl>
+        <dt>Backend</dt><dd>Java 17 with Maven. The built-in <span class="mono">com.sun.net.httpserver</span> serves a JSON API and the static pages, with no framework.</dd>
+        <dt>Database</dt><dd>MySQL over plain JDBC. Tables are created and demo data is loaded on first start.</dd>
+        <dt>Multi-tenancy</dt><dd>Each restaurant owner can only read and change their own restaurant, menu and orders. Every query is scoped to the signed-in account.</dd>
+        <dt>Order status</dt><dd>A small state machine decides which role may move an order from one status to the next. It is covered by JUnit 5 tests.</dd>
+        <dt>Real time</dt><dd>Server-sent events push status changes and driver locations to the browser, with a slow poll as a fallback.</dd>
+        <dt>Geolocation</dt><dd>Drivers share browser GPS, or use the built-in ride simulator. Customers and owners pin locations on Leaflet maps.</dd>
+        <dt>Frontend</dt><dd>Plain HTML, CSS and JavaScript. The glassmorphism look uses translucent panels, backdrop blur and a space-purple palette, set in Lora, Inter and JetBrains Mono.</dd>
+        <dt>Security</dt><dd>Passwords are hashed with PBKDF2. Sessions use HttpOnly cookies. Prices are always read from the database, never from the browser.</dd>
+      </dl>
+    </section>
+
+    <section class="glass pad">
+      <h2 style="margin-bottom:10px">Languages</h2>
+      <p class="muted">English, Hindi and Bengali.</p>
+    </section>
+  </div>
+</main>
+<footer>EverHungry</footer>
+<script src="/js/app.js"></script>
+<script>boot();</script>
+</body>
+</html>

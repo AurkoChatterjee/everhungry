@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Deliveries - EverHungry</title>
+  <link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+</head>
+<body>
+<div class="orbs"></div>
+<header id="nav"></header>
+<main class="wrap">
+  <div class="layout">
+    <section class="stack">
+      <div class="glass pad">
+        <div class="row between"><h2>Your position</h2><span class="mono muted" id="coords">not shared</span></div>
+        <div class="map tall" id="dmap" style="margin:14px 0"></div>
+        <div class="row">
+          <button class="btn" id="gpsBtn">Share my live location</button>
+          <button class="btn" id="simBtn">Simulate a ride</button>
+        </div>
+        <p class="muted" style="margin-top:10px;font-size:.88rem">Share location uses your device's GPS. Simulate a ride moves you along the route to the pickup, then to the customer, so you can test tracking on a desktop.</p>
+      </div>
+      <div class="glass pad"><h2 style="margin-bottom:12px">My deliveries</h2><div id="mine"></div></div>
+    </section>
+    <aside class="glass pad sticky"><h2 style="margin-bottom:12px">Waiting for a driver</h2><div id="avail"></div></aside>
+  </div>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/js/app.js"></script>
+<script>
+let map, me, pos = null, mine = [], avail = [], meMarker, targets = [], watchId = null, simTimer = null, lastSent = 0;
+
+const NEXT = { READY: ['PICKED_UP', 'Mark picked up'], PICKED_UP: ['ON_THE_WAY', 'Start trip'], ON_THE_WAY: ['DELIVERED', 'Mark delivered'] };
+const active = () => mine.filter(o => !['DELIVERED', 'REJECTED', 'CANCELLED'].includes(o.status));
+
+function setPos(lat, lng, send = true) {
+  pos = [lat, lng];
+  $('#coords').textContent = lat.toFixed(5) + ', ' + lng.toFixed(5);
+  if (!meMarker) meMarker = L.marker(pos, { icon: pinIcon('rider') }).addTo(map).bindTooltip('You');
+  else meMarker.setLatLng(pos);
+  if (send && Date.now() - lastSent > 1500) { lastSent = Date.now(); api('/driver/location', 'POST', { lat, lng }).catch(() => {}); }
+}
+function drawTargets() {
+  targets.forEach(t => t.remove()); targets = [];
+  active().forEach(o => {
+    const toShop = ['ACCEPTED', 'PREPARING', 'READY'].includes(o.status);
+    targets.push(L.marker([o.restaurant_lat, o.restaurant_lng], { icon: pinIcon('shop') }).addTo(map).bindTooltip(o.restaurant_name));
+    targets.push(L.marker([o.dest_lat, o.dest_lng], { icon: pinIcon('home') }).addTo(map).bindTooltip('Drop-off #' + o.id));
+  });
+}
+function card(o, claimable) {
+  const shop = [o.restaurant_lat, o.restaurant_lng], dest = [o.dest_lat, o.dest_lng];
+  const pickup = pos ? `${km(pos, shop).toFixed(1)} km to pickup &middot; ` : '';
+  const next = NEXT[o.status];
+  return `<div class="job"><div class="row between"><strong>${esc(o.restaurant_name)}</strong>${pill(o.status)}</div>
+    <div class="muted" style="font-size:.9rem">${pickup}${km(shop, dest).toFixed(1)} km delivery &middot; earns ${money(o.delivery_fee)}</div>
+    <div class="muted" style="font-size:.9rem;margin-top:4px">To: ${esc(o.address)}</div>
+    <div class="row">${claimable
+      ? `<button class="btn sm primary" data-claim="${o.id}">Take this order</button>`
+      : next ? `<button class="btn sm primary" data-id="${o.id}" data-s="${next[0]}">${next[1]}</button>`
+      : !['DELIVERED', 'REJECTED', 'CANCELLED'].includes(o.status) ? '<span class="muted" style="font-size:.9rem">Waiting for the kitchen to mark it ready</span>' : ''}</div></div>`;
+}
+function draw() {
+  $('#mine').innerHTML = mine.length ? mine.slice(0, 12).map(o => card(o, false)).join('') : '<div class="muted">No deliveries yet. Take an order from the list.</div>';
+  $('#avail').innerHTML = avail.length ? avail.map(o => card(o, true)).join('') : '<div class="muted">No orders are waiting. New ones appear here the moment a kitchen accepts them.</div>';
+  $$('[data-claim]').forEach(b => b.onclick = async () => { try { await api(`/orders/${b.dataset.claim}/claim`, 'POST', {}); toast('Order assigned to you', 'ok'); await load(); } catch (e) { fail(e); await load(); } });
+  $$('[data-s]').forEach(b => b.onclick = async () => { try { await api(`/orders/${b.dataset.id}/status`, 'POST', { status: b.dataset.s }); await load(); } catch (e) { fail(e); } });
+  drawTargets();
+}
+async function load() {
+  try { [mine, avail] = await Promise.all([api('/orders'), api('/driver/available')]); draw(); } catch (e) { fail(e); }
+}
+
+/* real GPS */
+$('#gpsBtn').onclick = () => {
+  if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; $('#gpsBtn').textContent = 'Share my live location'; return; }
+  if (!navigator.geolocation) return toast('This browser cannot share location.', 'bad');
+  stopSim();
+  watchId = navigator.geolocation.watchPosition(p => { setPos(p.coords.latitude, p.coords.longitude); map.setView(pos, Math.max(map.getZoom(), 14)); },
+    () => { toast('Location is blocked. Allow it in the browser, or use Simulate a ride.', 'bad'); watchId = null; $('#gpsBtn').textContent = 'Share my live location'; },
+    { enableHighAccuracy: true });
+  $('#gpsBtn').textContent = 'Stop sharing location';
+};
+
+/* simulated ride: head for the pickup, then the drop-off */
+function stopSim() { if (simTimer) { clearInterval(simTimer); simTimer = null; } $('#simBtn').textContent = 'Simulate a ride'; }
+$('#simBtn').onclick = () => {
+  if (simTimer) return stopSim();
+  if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; $('#gpsBtn').textContent = 'Share my live location'; }
+  const first = active()[0];
+  if (!pos) setPos(...(first ? [first.restaurant_lat - 0.012, first.restaurant_lng - 0.01] : CENTER));
+  $('#simBtn').textContent = 'Stop simulation';
+  simTimer = setInterval(() => {
+    const o = active().find(x => ['PICKED_UP', 'ON_THE_WAY'].includes(x.status)) || active()[0];
+    if (!o) return setPos(pos[0], pos[1]);
+    const t = ['PICKED_UP', 'ON_THE_WAY'].includes(o.status) ? [o.dest_lat, o.dest_lng] : [o.restaurant_lat, o.restaurant_lng];
+    const dLat = t[0] - pos[0], dLng = t[1] - pos[1], dist = Math.hypot(dLat, dLng), step = 0.0006;
+    if (dist < step) setPos(t[0], t[1]); else setPos(pos[0] + dLat / dist * step, pos[1] + dLng / dist * step);
+    draw();
+  }, 2000);
+};
+
+(async () => {
+  me = await boot(['driver']);
+  if (!me) return;
+  map = makeMap('dmap', CENTER, 13);
+  await load();
+  const first = active()[0];
+  if (first) map.setView([first.restaurant_lat, first.restaurant_lng], 13);
+  live(ev => { if (ev.type !== 'location') load(); });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>My orders - EverHungry</title>
+  <link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+</head>
+<body>
+<div class="orbs"></div>
+<header id="nav"></header>
+<main class="wrap">
+  <div class="split">
+    <section><h2 style="margin-bottom:14px">My orders</h2><div class="olist" id="list"></div></section>
+    <section class="glass pad" id="detail"><div class="empty">Select an order to follow it.</div></section>
+  </div>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/js/app.js"></script>
+<script>
+let orders = [], selected = null, map = null, riderMarker = null, fitted = null;
+
+function eta(o) {
+  if (['DELIVERED', 'REJECTED', 'CANCELLED'].includes(o.status)) return '';
+  const dest = [o.dest_lat, o.dest_lng], shop = [o.restaurant_lat, o.restaurant_lng];
+  let mins;
+  if (['PICKED_UP', 'ON_THE_WAY'].includes(o.status) && o.driver_location)
+    mins = km([o.driver_location.lat, o.driver_location.lng], dest) / 18 * 60 + 2;
+  else mins = (['PLACED', 'ACCEPTED', 'PREPARING'].includes(o.status) ? o.prep_minutes : 5) + km(shop, dest) / 18 * 60 + 5;
+  return `About ${Math.max(1, Math.round(mins))} min (estimate)`;
+}
+function drawList() {
+  $('#list').innerHTML = orders.length ? orders.map(o => `
+    <div class="glass ocard ${selected === o.id ? 'on' : ''}" data-id="${o.id}" tabindex="0" role="button">
+      <div class="row between"><strong>${esc(o.restaurant_name)}</strong>${pill(o.status)}</div>
+      <div class="row between muted" style="margin-top:4px"><span class="mono">#${o.id}</span><span class="mono">${money(o.total)}</span></div>
+    </div>`).join('') : '<div class="glass empty">No orders yet. <a href="/">Find something to eat</a>.</div>';
+  $$('.ocard').forEach(c => { c.onclick = () => select(Number(c.dataset.id)); c.onkeydown = e => { if (e.key === 'Enter') c.click(); }; });
+}
+function select(id) { selected = id; fitted = null; history.replaceState(null, '', '?id=' + id); drawList(); drawDetail(); }
+function drawDetail() {
+  const o = orders.find(x => x.id === selected);
+  if (!o) return;
+  const idx = FLOW.indexOf(o.status), dead = ['REJECTED', 'CANCELLED'].includes(o.status);
+  const sub = o.items.reduce((s, i) => s + i.price * i.qty, 0);
+  if (map) { map.remove(); map = null; riderMarker = null; }
+  $('#detail').innerHTML = `
+    <div class="row between"><div><h2>${esc(o.restaurant_name)}</h2><div class="mono muted">Order #${o.id}</div></div>${pill(o.status)}</div>
+    ${dead ? `<p style="margin:16px 0;color:var(--rose)">${STATUS[o.status]}. You were not charged.</p>` :
+      `<div class="stepper" aria-label="Progress">${FLOW.map((s, i) => `<i class="${i < idx || o.status === 'DELIVERED' ? 'done' : i === idx ? 'now' : ''}" title="${STATUS[s]}"></i>`).join('')}</div>
+       <div class="row between"><strong>${STATUS[o.status]}</strong><span class="muted">${eta(o)}</span></div>`}
+    ${o.driver_name ? `<p class="muted" style="margin-top:8px">Driver: ${esc(o.driver_name)}</p>` : (!dead && o.status !== 'PLACED' && o.status !== 'DELIVERED' ? '<p class="muted" style="margin-top:8px">Waiting for a driver to pick this up.</p>' : '')}
+    <div class="map tall" id="omap" style="margin:18px 0"></div>
+    <div class="two">
+      <div><h3 style="margin-bottom:8px">Items</h3>
+        ${o.items.map(i => `<div class="line"><span>${i.qty} &times; ${esc(i.name)}</span><span class="mono">${money(i.price * i.qty)}</span></div>`).join('')}
+        <div class="line muted"><span>Delivery fee</span><span class="mono">${money(o.delivery_fee)}</span></div>
+        <div class="line total"><span>Total</span><span class="mono">${money(o.total)}</span></div>
+        <p class="muted" style="margin-top:10px">Deliver to: ${esc(o.address)}</p></div>
+      <div><h3 style="margin-bottom:8px">Timeline</h3><ul class="timeline">${o.events.map(e => `<li><span>${STATUS[e.status] || e.status}</span><span class="mono">${timeOf(e.created_at)}</span></li>`).join('')}</ul></div>
+    </div>
+    ${o.status === 'PLACED' ? '<button class="btn danger" id="cancel" style="margin-top:16px">Cancel order</button>' : ''}`;
+  drawMap(o);
+  const c = $('#cancel');
+  if (c) c.onclick = async () => { try { await api(`/orders/${o.id}/status`, 'POST', { status: 'CANCELLED' }); await load(); } catch (e) { fail(e); } };
+}
+function drawMap(o) {
+  const shop = [o.restaurant_lat, o.restaurant_lng], dest = [o.dest_lat, o.dest_lng];
+  map = makeMap('omap', shop, 13);
+  L.marker(shop, { icon: pinIcon('shop') }).addTo(map).bindTooltip(o.restaurant_name);
+  L.marker(dest, { icon: pinIcon('home') }).addTo(map).bindTooltip('Your door');
+  L.polyline([shop, dest], { color: '#ffffff', weight: 2, opacity: .35, dashArray: '6 8' }).addTo(map);
+  const pts = [shop, dest];
+  if (o.driver_location) { setRider(o.driver_location.lat, o.driver_location.lng); pts.push([o.driver_location.lat, o.driver_location.lng]); }
+  map.fitBounds(pts, { padding: [40, 40] });
+}
+function setRider(lat, lng) {
+  if (!map) return;
+  if (riderMarker) riderMarker.setLatLng([lat, lng]);
+  else riderMarker = L.marker([lat, lng], { icon: pinIcon('rider') }).addTo(map).bindTooltip('Your driver');
+}
+async function load() {
+  try {
+    orders = await api('/orders');
+    if (selected === null && orders.length) selected = Number(new URLSearchParams(location.search).get('id')) || orders[0].id;
+    drawList(); drawDetail();
+  } catch (e) { fail(e); }
+}
+(async () => {
+  if (!(await boot(['customer']))) return;
+  await load();
+  live(ev => {
+    if (ev.type === 'location') { if (ev.orderId === selected) setRider(ev.lat, ev.lng); }
+    else load();
+  });
+})();
+</script>
+</body>
+</html>

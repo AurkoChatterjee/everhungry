@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>EverHungry - food delivery from independent kitchens</title>
+  <link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div class="orbs"></div>
+<header id="nav"></header>
+<main class="wrap">
+  <section class="hero">
+    <div>
+      <h1>Hot food, tracked to your door.</h1>
+      <p class="lead">Order from independent kitchens and watch each step happen as it happens: accepted, cooked, picked up, delivered. Your driver's position updates on the map while they ride.</p>
+      <div class="row">
+        <a class="btn primary" href="#restaurants">Browse restaurants</a>
+        <a class="btn" href="/auth.html?mode=register">Cook or deliver with EverHungry</a>
+      </div>
+    </div>
+    <div class="glass tracker" aria-label="Example of live order tracking">
+      <div class="row between"><h3>Dal Makhani and two naan</h3><span class="pill s-ON_THE_WAY">On the way</span></div>
+      <p class="muted">Example order</p>
+      <div class="route">
+        <svg viewBox="0 0 400 150" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M 20 120 C 120 120, 130 30, 230 50 S 330 20, 380 30" fill="none" stroke="rgba(255,255,255,.35)" stroke-width="2" stroke-dasharray="6 7"/>
+          <circle cx="20" cy="120" r="9" fill="#ffb347"/><circle cx="380" cy="30" r="9" fill="#5fe3b5"/>
+        </svg>
+        <div class="courier"></div>
+      </div>
+      <div class="steps"><span class="done">Accepted</span><span class="done">Prepared</span><span class="done">Picked up</span><span class="now">On the way</span><span>Delivered</span></div>
+    </div>
+  </section>
+
+  <section id="restaurants">
+    <div class="section-head">
+      <h2>Kitchens near you</h2>
+      <div class="row">
+        <input id="q" type="search" placeholder="Search by name or cuisine" style="width:240px" aria-label="Search restaurants">
+        <div class="seg" id="filter"><button class="on" data-f="all">All</button><button data-f="open">Open now</button></div>
+      </div>
+    </div>
+    <div class="grid" id="grid"></div>
+  </section>
+
+  <section class="roles">
+    <div class="glass pad"><h3>If you are hungry</h3><p class="muted">Pick a kitchen, build your order, pin your door on the map and follow it until it arrives.</p></div>
+    <div class="glass pad"><h3>If you run a kitchen</h3><p class="muted">Get your own dashboard to manage the menu, open or close for the day, and move each order from accepted to ready.</p></div>
+    <div class="glass pad"><h3>If you ride</h3><p class="muted">See orders waiting for a driver, claim one, and share your live position with the customer on the way.</p></div>
+  </section>
+</main>
+<footer>EverHungry was built by <a href="/creator.html">A. Chatterjee</a></footer>
+
+<script src="/js/app.js"></script>
+<script>
+let all = [], filter = 'all';
+const tiles = ['t0', 't1', 't2', 't3'];
+function draw() {
+  const q = $('#q').value.trim().toLowerCase();
+  const list = all.filter(r => (filter === 'all' || r.is_open) &&
+    (!q || (r.name + ' ' + (r.cuisine || '')).toLowerCase().includes(q)));
+  $('#grid').innerHTML = list.length ? list.map(r => `
+    <a class="glass rcard ${r.is_open ? '' : 'closed-card'}" href="/restaurant.html?id=${r.id}">
+      <div class="tile ${tiles[r.id % 4]}">${esc(r.name[0])}</div>
+      <div class="row between"><h3>${esc(r.name)}</h3><span class="pill ${r.is_open ? 'open' : 'closed'}">${r.is_open ? 'Open' : 'Closed'}</span></div>
+      <div class="muted">${esc(r.cuisine || 'Kitchen')} &middot; ${esc(r.address || '')}</div>
+      <p>${esc(r.description || '')}</p>
+      <div class="mono muted">${r.prep_minutes} min prep &middot; ${r.item_count} dishes</div>
+    </a>`).join('') : '<div class="empty glass" style="grid-column:1/-1">No restaurants match. Clear the search or switch to All.</div>';
+}
+$('#q').oninput = draw;
+$$('#filter button').forEach(b => b.onclick = () => {
+  filter = b.dataset.f; $$('#filter button').forEach(x => x.classList.toggle('on', x === b)); draw();
+});
+(async () => {
+  await boot();
+  try { all = await api('/restaurants'); draw(); } catch (e) { fail(e); }
+})();
+</script>
+</body>
+</html>

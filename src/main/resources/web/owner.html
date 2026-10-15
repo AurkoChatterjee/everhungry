@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Kitchen - EverHungry</title>
+  <link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+</head>
+<body>
+<div class="orbs"></div>
+<header id="nav"></header>
+<main class="wrap">
+  <div class="row between" style="margin-top:30px">
+    <div><h1 style="font-size:2.4rem" id="rname">Kitchen</h1><div class="muted" id="rsub"></div></div>
+    <label class="row" style="gap:10px;margin:0;cursor:pointer"><input type="checkbox" id="openToggle"> <span id="openLabel">Closed</span></label>
+  </div>
+  <div class="seg tabs" id="tabs"><button data-t="orders" class="on">Orders</button><button data-t="menu">Menu</button><button data-t="settings">Restaurant settings</button></div>
+
+  <section id="orders"><div class="board" id="board"></div></section>
+
+  <section id="menu" class="hidden glass pad" style="margin-top:20px">
+    <table><thead><tr><th>Dish</th><th>Description</th><th style="width:110px">Price</th><th>On menu</th><th></th></tr></thead><tbody id="rows"></tbody></table>
+    <h3 style="margin:24px 0 10px">Add a dish</h3>
+    <div class="row"><input id="nn" placeholder="Dish name" style="flex:1;min-width:160px"><input id="nd" placeholder="Short description" style="flex:2;min-width:200px"><input id="np" type="number" min="1" step="1" placeholder="Price" style="width:110px"><button class="btn primary" id="add">Add dish</button></div>
+  </section>
+
+  <section id="settings" class="hidden glass pad" style="margin-top:20px">
+    <div class="two">
+      <div class="stack">
+        <div class="field"><label for="sn">Name</label><input id="sn"></div>
+        <div class="two"><div class="field"><label for="sc">Cuisine</label><input id="sc"></div><div class="field"><label for="sp">Prep time (minutes)</label><input id="sp" type="number" min="5" max="90"></div></div>
+        <div class="field"><label for="sd">Description</label><textarea id="sd" maxlength="400"></textarea></div>
+        <div class="field"><label for="sa">Address</label><input id="sa"></div>
+        <button class="btn primary" id="save">Save changes</button>
+      </div>
+      <div><label>Kitchen location (drivers navigate here)</label><div class="map tall" id="smap"></div>
+        <div class="row" style="margin-top:8px"><button class="btn sm" id="gps">Use my location</button><span class="muted" style="font-size:.85rem">Drag the pin or tap the map</span></div></div>
+    </div>
+  </section>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/js/app.js"></script>
+<script>
+let rest, orders = [], map, marker;
+const COLS = [
+  ['New orders', ['PLACED']], ['In the kitchen', ['ACCEPTED', 'PREPARING']],
+  ['Ready for pickup', ['READY']], ['On the road and finished', ['PICKED_UP', 'ON_THE_WAY', 'DELIVERED', 'REJECTED', 'CANCELLED']]
+];
+const ACTIONS = {
+  PLACED: [['ACCEPTED', 'Accept', 'good'], ['REJECTED', 'Decline', 'danger']],
+  ACCEPTED: [['PREPARING', 'Start preparing', 'primary']],
+  PREPARING: [['READY', 'Mark ready', 'primary']]
+};
+async function move(id, status) { try { await api(`/orders/${id}/status`, 'POST', { status }); await loadOrders(); } catch (e) { fail(e); } }
+
+function drawBoard() {
+  $('#board').innerHTML = COLS.map(([title, sts]) => {
+    const list = orders.filter(o => sts.includes(o.status)).slice(0, sts.includes('DELIVERED') ? 8 : 50);
+    return `<div class="glass col"><h3>${title}<span class="mono muted">${list.length}</span></h3>${list.map(o => `
+      <div class="job"><div class="row between"><strong class="mono">#${o.id}</strong>${pill(o.status)}</div>
+        <div class="muted">${esc(o.customer_name)} &middot; ${timeOf(o.created_at)}</div>
+        <ul>${o.items.map(i => `<li>${i.qty} &times; ${esc(i.name)}</li>`).join('')}</ul>
+        ${o.note ? `<div class="muted" style="font-size:.85rem">Note: ${esc(o.note)}</div>` : ''}
+        <div class="row between"><span class="mono">${money(o.total)}</span>
+        <span class="muted" style="font-size:.85rem">${o.status === 'READY' ? (o.driver_name ? 'Driver: ' + esc(o.driver_name) : 'Waiting for a driver') : (o.driver_name && !['DELIVERED'].includes(o.status) ? 'Driver: ' + esc(o.driver_name) : '')}</span></div>
+        <div class="row">${(ACTIONS[o.status] || []).map(([s, label, cls]) => `<button class="btn sm ${cls}" data-id="${o.id}" data-s="${s}">${label}</button>`).join('')}</div></div>`).join('') || '<div class="muted">Nothing here.</div>'}</div>`;
+  }).join('');
+  $$('#board button').forEach(b => b.onclick = () => move(b.dataset.id, b.dataset.s));
+}
+async function loadOrders() { try { orders = await api('/orders'); drawBoard(); } catch (e) { fail(e); } }
+
+function drawMenu() {
+  $('#rows').innerHTML = rest.menu.map(m => `<tr data-id="${m.id}">
+    <td><input value="${esc(m.name)}" data-k="name"></td><td><input value="${esc(m.description || '')}" data-k="description"></td>
+    <td><input type="number" min="1" value="${m.price}" data-k="price"></td>
+    <td><input type="checkbox" ${m.available ? 'checked' : ''} data-k="available" aria-label="On menu"></td>
+    <td class="row" style="flex-wrap:nowrap"><button class="btn sm" data-a="save">Save</button><button class="btn sm danger" data-a="del">Remove</button></td></tr>`).join('')
+    || '<tr><td colspan="5" class="muted">No dishes yet. Add your first one below.</td></tr>';
+  $$('#rows tr[data-id]').forEach(tr => {
+    const id = tr.dataset.id, val = k => { const el = $(`[data-k=${k}]`, tr); return el.type === 'checkbox' ? el.checked : el.value; };
+    $('[data-a=save]', tr).onclick = async () => { try { await api('/owner/menu/' + id, 'PUT', { name: val('name'), description: val('description'), price: val('price'), available: val('available') }); toast('Dish saved', 'ok'); } catch (e) { fail(e); } };
+    $('[data-a=del]', tr).onclick = async () => { try { await api('/owner/menu/' + id, 'DELETE'); await loadRest(); } catch (e) { fail(e); } };
+  });
+}
+function drawHead() {
+  $('#rname').textContent = rest.name;
+  $('#rsub').textContent = [rest.cuisine, rest.address].filter(Boolean).join(', ');
+  $('#openToggle').checked = !!rest.is_open;
+  $('#openLabel').textContent = rest.is_open ? 'Open for orders' : 'Closed';
+}
+function fillSettings() {
+  $('#sn').value = rest.name; $('#sc').value = rest.cuisine || ''; $('#sp').value = rest.prep_minutes;
+  $('#sd').value = rest.description || ''; $('#sa').value = rest.address || '';
+}
+async function saveRest(patch = {}) {
+  const ll = marker ? marker.getLatLng() : { lat: rest.lat, lng: rest.lng };
+  try {
+    rest = Object.assign(rest, await api('/owner/restaurant', 'PUT', {
+      name: $('#sn').value || rest.name, cuisine: $('#sc').value, description: $('#sd').value, address: $('#sa').value,
+      prepMinutes: $('#sp').value, lat: ll.lat, lng: ll.lng, isOpen: !!rest.is_open, ...patch
+    }));
+    drawHead(); toast('Saved', 'ok');
+  } catch (e) { fail(e); drawHead(); }
+}
+async function loadRest() { rest = await api('/owner/restaurant'); drawHead(); fillSettings(); drawMenu(); }
+
+$$('#tabs button').forEach(b => b.onclick = () => {
+  $$('#tabs button').forEach(x => x.classList.toggle('on', x === b));
+  ['orders', 'menu', 'settings'].forEach(t => $('#' + t).classList.toggle('hidden', t !== b.dataset.t));
+  if (b.dataset.t === 'settings') initMap();
+});
+function initMap() {
+  if (map) { map.invalidateSize(); return; }
+  map = makeMap('smap', [rest.lat, rest.lng], 14);
+  marker = L.marker([rest.lat, rest.lng], { icon: pinIcon('shop'), draggable: true }).addTo(map);
+  map.on('click', e => marker.setLatLng(e.latlng));
+}
+$('#gps').onclick = () => { initMap(); navigator.geolocation
+  ? navigator.geolocation.getCurrentPosition(p => { const ll = [p.coords.latitude, p.coords.longitude]; marker.setLatLng(ll); map.setView(ll, 16); }, () => toast('Location is blocked. Drag the pin instead.', 'bad'))
+  : toast('This browser cannot share location.', 'bad'); };
+$('#save').onclick = () => saveRest();
+$('#openToggle').onchange = e => saveRest({ isOpen: e.target.checked }).then(() => { rest.is_open = e.target.checked; drawHead(); });
+$('#add').onclick = async () => {
+  try {
+    await api('/owner/menu', 'POST', { name: $('#nn').value, description: $('#nd').value, price: $('#np').value });
+    $('#nn').value = $('#nd').value = $('#np').value = ''; await loadRest(); toast('Dish added', 'ok');
+  } catch (e) { fail(e); }
+};
+(async () => {
+  if (!(await boot(['owner']))) return;
+  try { await loadRest(); } catch (e) { fail(e); }
+  await loadOrders();
+  live(ev => { if (ev.type !== 'location') loadOrders(); });
+})();
+</script>
+</body>
+</html>
